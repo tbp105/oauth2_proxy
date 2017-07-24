@@ -18,6 +18,7 @@ func main() {
 	flagSet := flag.NewFlagSet("oauth2_proxy", flag.ExitOnError)
 
 	emailDomains := StringArray{}
+	verifyClientCas := StringArray{}
 	upstreams := StringArray{}
 	skipAuthRegex := StringArray{}
 	googleGroups := StringArray{}
@@ -76,6 +77,9 @@ func main() {
 	flagSet.String("validate-url", "", "Access token validation endpoint")
 	flagSet.String("scope", "", "OAuth scope specification")
 	flagSet.String("approval-prompt", "force", "OAuth approval_prompt")
+
+	flagSet.String("verify-client-ca", "", "CA to use to verify client certs")
+	flagSet.Var(&verifyClientCas, "verify-client-cn", "CN of client certs to permit")
 
 	flagSet.String("signature-key", "", "GAP-Signature request signature key (algorithm:secretkey)")
 

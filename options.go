@@ -27,6 +27,9 @@ type Options struct {
 	TLSCertFile  string `flag:"tls-cert" cfg:"tls_cert_file"`
 	TLSKeyFile   string `flag:"tls-key" cfg:"tls_key_file"`
 
+	VerifyClientCA string `flag:"verify-client-ca" cfg:"verify_client_ca"`
+	VerifyClientCNs []string `flag:"verify-client-cn" cfg:"verify_client_cns"`
+
 	AuthenticatedEmailsFile  string   `flag:"authenticated-emails-file" cfg:"authenticated_emails_file"`
 	AzureTenant              string   `flag:"azure-tenant" cfg:"azure_tenant"`
 	EmailDomains             []string `flag:"email-domain" cfg:"email_domains"`

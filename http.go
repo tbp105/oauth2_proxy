@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"io/ioutil"
+	"crypto/x509"
 )
 
 type Server struct {
@@ -59,9 +61,25 @@ func (s *Server) ServeHTTP() {
 
 func (s *Server) ServeHTTPS() {
 	addr := s.Opts.HttpsAddress
+
+	caCertPool := x509.NewCertPool()
+
+	if s.Opts.VerifyClientCA != "" {
+		log.Printf("Using CA %s", s.Opts.VerifyClientCA)
+		caCert, err := ioutil.ReadFile(s.Opts.VerifyClientCA)
+		if err != nil {
+			log.Fatal(err)
+		}
+		caCertPool.AppendCertsFromPEM(caCert)
+	} else {
+		log.Printf("No CA, not adding cert: %s",  s.Opts.VerifyClientCA)
+	}
+
 	config := &tls.Config{
+		ClientCAs: caCertPool,
 		MinVersion: tls.VersionTLS12,
 		MaxVersion: tls.VersionTLS12,
+		ClientAuth: tls.VerifyClientCertIfGiven,
 	}
 	if config.NextProtos == nil {
 		config.NextProtos = []string{"http/1.1"}

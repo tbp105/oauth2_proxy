@@ -35,23 +35,23 @@ var SignatureHeaders []string = []string{
 }
 
 type OAuthProxy struct {
-	CookieSeed     string
-	CookieName     string
-	CSRFCookieName string
-	CookieDomain   string
-	CookieSecure   bool
-	CookieHttpOnly bool
-	CookieExpire   time.Duration
-	CookieRefresh  time.Duration
-	Validator      func(string) bool
+	CookieSeed          string
+	CookieName          string
+	CSRFCookieName      string
+	CookieDomain        string
+	CookieSecure        bool
+	CookieHttpOnly      bool
+	CookieExpire        time.Duration
+	CookieRefresh       time.Duration
+	Validator           func(string) bool
 
-	RobotsPath        string
-	PingPath          string
-	SignInPath        string
-	SignOutPath       string
-	OAuthStartPath    string
-	OAuthCallbackPath string
-	AuthOnlyPath      string
+	RobotsPath          string
+	PingPath            string
+	SignInPath          string
+	SignOutPath         string
+	OAuthStartPath      string
+	OAuthCallbackPath   string
+	AuthOnlyPath        string
 
 	redirectURL         *url.URL // the url to receive requests at
 	provider            providers.Provider
@@ -79,6 +79,8 @@ type UpstreamProxy struct {
 	handler  http.Handler
 	auth     hmacauth.HmacAuth
 }
+var accessTokens map[string]*providers.SessionState
+
 
 func (u *UpstreamProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("GAP-Upstream-Address", u.upstream)
@@ -90,6 +92,11 @@ func (u *UpstreamProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func NewReverseProxy(target *url.URL) (proxy *httputil.ReverseProxy) {
+	// initialize this before we start serving any requests
+	if (accessTokens == nil) {
+		accessTokens = make(map[string]*providers.SessionState)
+	}
+
 	return httputil.NewSingleHostReverseProxy(target)
 }
 func setProxyUpstreamHostHeader(proxy *httputil.ReverseProxy, target *url.URL) {
@@ -290,7 +297,7 @@ func (p *OAuthProxy) makeCookie(req *http.Request, name string, value string, ex
 }
 
 func (p *OAuthProxy) ClearCSRFCookie(rw http.ResponseWriter, req *http.Request) {
-	http.SetCookie(rw, p.MakeCSRFCookie(req, "", time.Hour*-1, time.Now()))
+	http.SetCookie(rw, p.MakeCSRFCookie(req, "", time.Hour * -1, time.Now()))
 }
 
 func (p *OAuthProxy) SetCSRFCookie(rw http.ResponseWriter, req *http.Request, val string) {
@@ -298,7 +305,7 @@ func (p *OAuthProxy) SetCSRFCookie(rw http.ResponseWriter, req *http.Request, va
 }
 
 func (p *OAuthProxy) ClearSessionCookie(rw http.ResponseWriter, req *http.Request) {
-	http.SetCookie(rw, p.MakeSessionCookie(req, "", time.Hour*-1, time.Now()))
+	http.SetCookie(rw, p.MakeSessionCookie(req, "", time.Hour * -1, time.Now()))
 }
 
 func (p *OAuthProxy) SetSessionCookie(rw http.ResponseWriter, req *http.Request, val string) {
@@ -593,8 +600,10 @@ func (p *OAuthProxy) Proxy(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
+
 func (p *OAuthProxy) Authenticate(rw http.ResponseWriter, req *http.Request) int {
-	var saveSession, clearSession, revalidated bool
+	var saveSession, clearSession, revalidated, tlsauth bool
+	var accessToken string
 	remoteAddr := getRemoteAddr(req)
 
 	session, sessionAge, err := p.LoadCookiedSession(req)
@@ -604,6 +613,41 @@ func (p *OAuthProxy) Authenticate(rw http.ResponseWriter, req *http.Request) int
 	if session != nil && sessionAge > p.CookieRefresh && p.CookieRefresh != time.Duration(0) {
 		log.Printf("%s refreshing %s old session cookie for %s (refresh after %s)", remoteAddr, sessionAge, session, p.CookieRefresh)
 		saveSession = true
+	}
+
+
+	if(len(req.TLS.PeerCertificates) > 0 && req.TLS.PeerCertificates[0].Subject.CommonName != "") {
+		tlsauth = true
+		log.Printf("found cn from cert: %s", req.TLS.PeerCertificates[0].Subject.CommonName)
+		session = &providers.SessionState{
+			AccessToken:  "",
+			ExpiresOn:    time.Now().Add(60 * time.Second).Truncate(time.Second),
+			RefreshToken: "",
+			Email:        req.TLS.PeerCertificates[0].Subject.CommonName,
+		}
+		saveSession = true
+		clearSession = false
+	}
+
+	var auth string = req.Header.Get("Authorization")
+
+	if auth != "" {
+		authParts := strings.Split(auth, " ")
+		if (len(authParts) == 2 && authParts[0] == "Bearer") {
+			accessToken = authParts[1]
+			if (accessTokens[accessToken] != nil && accessTokens[accessToken].ExpiresOn.After(time.Now())) {
+				session = accessTokens[accessToken]
+				saveSession = false
+				clearSession = false
+			} else if s, err := p.provider.VerifyAccessToken(accessToken); err != nil {
+				log.Println("Verify failed")
+				log.Println(err)
+			} else {
+				session = s
+				saveSession = true
+				clearSession = false
+			}
+		}
 	}
 
 	if ok, err := p.provider.RefreshSessionIfNeeded(session); err != nil {
@@ -628,10 +672,14 @@ func (p *OAuthProxy) Authenticate(rw http.ResponseWriter, req *http.Request) int
 			saveSession = false
 			session = nil
 			clearSession = true
+		} else {
+			if accessToken != "" {
+				accessTokens[accessToken] = session
+			}
 		}
 	}
 
-	if session != nil && session.Email != "" && !p.Validator(session.Email) {
+	if tlsauth == false && session != nil && session.Email != "" && !p.Validator(session.Email) {
 		log.Printf("%s Permission Denied: removing session %s", remoteAddr, session)
 		session = nil
 		saveSession = false

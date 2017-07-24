@@ -71,12 +71,15 @@ func emailFromIdToken(idToken string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return emailFromJsonString(b)
+}
 
+func emailFromJsonString(jsonString []byte) (string, error) {
 	var email struct {
 		Email         string `json:"email"`
 		EmailVerified bool   `json:"email_verified"`
 	}
-	err = json.Unmarshal(b, &email)
+	err := json.Unmarshal(jsonString, &email)
 	if err != nil {
 		return "", err
 	}
@@ -153,6 +156,53 @@ func (p *GoogleProvider) Redeem(redirectURL, code string) (s *SessionState, err 
 		RefreshToken: jsonResponse.RefreshToken,
 		Email:        email,
 	}
+	return
+}
+
+
+func (p *GoogleProvider) VerifyAccessToken(token string) (s *SessionState, err error) {
+	if token == "" {
+		err = errors.New("missing token")
+		return
+	}
+
+	params := url.Values{}
+	var req *http.Request
+	req, err = http.NewRequest("GET", "https://www.googleapis.com/oauth2/v3/userinfo", bytes.NewBufferString(params.Encode()))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	var body []byte
+	body, err = ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return
+	}
+
+	if resp.StatusCode != 200 {
+		err = fmt.Errorf("got %d from %q %s", resp.StatusCode, p.RedeemURL.String(), body)
+		return
+	}
+
+	var email string
+	email, err = emailFromJsonString(body)
+	if err != nil {
+		return
+	}
+	s = &SessionState{
+		AccessToken:  token,
+		ExpiresOn:    time.Now().Add(1 * time.Hour).Truncate(time.Second),
+		RefreshToken: "invalid",
+		Email:        email,
+	}
+
+
 	return
 }
 
